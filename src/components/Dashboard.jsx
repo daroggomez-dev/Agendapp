@@ -1,0 +1,1 @@
+find src -name "*.jsx" -o -name "*.js" | sort
