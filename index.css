@@ -1,0 +1,189 @@
+import React, { useState, useEffect } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
+import { collection, addDoc, getDocs, query, where, doc, getDoc } from 'firebase/firestore';
+import { db } from '../firebase/config';
+import { useAuth } from '../hooks/useAuth';
+import { generarFechasClase } from '../utils/helpers';
+
+const DIAS = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
+
+export default function Institucion() {
+  const { id } = useParams();
+  const { currentUser } = useAuth();
+  const navigate = useNavigate();
+  const [institucion, setInstitucion] = useState(null);
+  const [cursos, setCursos] = useState([]);
+  const [modal, setModal] = useState(false);
+  const [paso, setPaso] = useState(1);
+  const [form, setForm] = useState({
+    nombre: '', horario: '', diasSemana: [], fechaInicio: '2026-03-01', fechaFin: '2026-12-18'
+  });
+  const [alumnos, setAlumnos] = useState('');
+
+  useEffect(() => {
+    cargarDatos();
+  }, [id]);
+
+  async function cargarDatos() {
+    const instSnap = await getDoc(doc(db, 'instituciones', id));
+    if (instSnap.exists()) setInstitucion({ id: instSnap.id, ...instSnap.data() });
+
+    const q = query(collection(db, 'cursos'), where('instId', '==', id), where('uid', '==', currentUser.uid));
+    const snap = await getDocs(q);
+    setCursos(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+  }
+
+  function toggleDia(dia) {
+    setForm(f => ({
+      ...f,
+      diasSemana: f.diasSemana.includes(dia)
+        ? f.diasSemana.filter(d => d !== dia)
+        : [...f.diasSemana, dia]
+    }));
+  }
+
+  async function guardarCurso() {
+    const listaAlumnos = alumnos
+      .split('\n')
+      .map(a => a.trim())
+      .filter(a => a.length > 0)
+      .map((nombre, i) => ({ id: `alumno_${i}`, nombre }));
+
+    const fechas = generarFechasClase(form.diasSemana, form.fechaInicio, form.fechaFin);
+
+    await addDoc(collection(db, 'cursos'), {
+      uid: currentUser.uid,
+      instId: id,
+      nombre: form.nombre,
+      horario: form.horario,
+      diasSemana: form.diasSemana,
+      fechaInicio: form.fechaInicio,
+      fechaFin: form.fechaFin,
+      fechas,
+      alumnos: listaAlumnos,
+      creadoEn: new Date()
+    });
+
+    setModal(false);
+    setPaso(1);
+    setForm({ nombre: '', horario: '', diasSemana: [], fechaInicio: '2026-03-01', fechaFin: '2026-12-18' });
+    setAlumnos('');
+    cargarDatos();
+  }
+
+  const iniciales = (nombre) => nombre?.split(' ').map(p => p[0]).join('').toUpperCase().slice(0, 2) || '??';
+
+  return (
+    <div style={s.container}>
+      <div style={s.inner}>
+        <div style={s.header}>
+          <button style={s.backBtn} onClick={() => navigate('/')}>←</button>
+          <div style={s.headerLogo}>
+            {institucion?.logo
+              ? <img src={institucion.logo} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+              : <span style={{ fontSize: 14, fontWeight: 600, color: '#888' }}>{iniciales(institucion?.nombre || '')}</span>
+            }
+          </div>
+          <h2 style={s.headerTitulo}>{institucion?.nombre}</h2>
+          <button style={s.btnPrimary} onClick={() => setModal(true)}>+ Curso</button>
+        </div>
+
+        {cursos.length === 0
+          ? <div style={s.empty}>Todavía no tenés cursos en esta institución.<br />Tocá "+ Curso" para agregar uno.</div>
+          : cursos.map(curso => (
+            <div key={curso.id} style={s.cursoCard} onClick={() => navigate(`/curso/${curso.id}`)}>
+              <div>
+                <div style={s.cursoNombre}>{curso.nombre}</div>
+                <div style={s.cursoDet}>{curso.horario} · {curso.alumnos?.length || 0} alumnos</div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: 20, fontWeight: 600, color: '#3B6D11' }}>—</div>
+                <div style={{ fontSize: 11, color: '#999' }}>asistencia</div>
+              </div>
+            </div>
+          ))
+        }
+      </div>
+
+      {modal && (
+        <div style={s.overlay} onClick={() => setModal(false)}>
+          <div style={s.modal} onClick={e => e.stopPropagation()}>
+
+            {paso === 1 && <>
+              <h3 style={s.modalTitulo}>Nuevo curso — Datos</h3>
+              <label style={s.label}>Nombre del curso</label>
+              <input style={s.input} placeholder="Ej: 3° B, 4° Eco TM..." value={form.nombre} onChange={e => setForm(f => ({ ...f, nombre: e.target.value }))} />
+              <label style={s.label}>Horario</label>
+              <input style={s.input} placeholder="Ej: Lun y Vie · 13:00–15:00" value={form.horario} onChange={e => setForm(f => ({ ...f, horario: e.target.value }))} />
+              <label style={s.label}>Días de clase</label>
+              <div style={s.diasGrid}>
+                {DIAS.map((dia, i) => (
+                  <button
+                    key={i}
+                    style={{ ...s.diaBtn, ...(form.diasSemana.includes(i) ? s.diaBtnSel : {}) }}
+                    onClick={() => toggleDia(i)}
+                    type="button"
+                  >{dia}</button>
+                ))}
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <div style={{ flex: 1 }}>
+                  <label style={s.label}>Fecha de inicio</label>
+                  <input style={s.input} type="date" value={form.fechaInicio} onChange={e => setForm(f => ({ ...f, fechaInicio: e.target.value }))} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={s.label}>Fecha de fin</label>
+                  <input style={s.input} type="date" value={form.fechaFin} onChange={e => setForm(f => ({ ...f, fechaFin: e.target.value }))} />
+                </div>
+              </div>
+              <div style={s.modalBtns}>
+                <button style={s.btnPrimary} onClick={() => setPaso(2)} disabled={!form.nombre || form.diasSemana.length === 0}>Siguiente →</button>
+                <button style={s.btnSec} onClick={() => setModal(false)}>Cancelar</button>
+              </div>
+            </>}
+
+            {paso === 2 && <>
+              <h3 style={s.modalTitulo}>Nuevo curso — Alumnos</h3>
+              <p style={{ fontSize: 13, color: '#888', marginBottom: 12 }}>Pegá la lista desde Excel o escribí un alumno por línea.</p>
+              <textarea
+                style={{ ...s.input, minHeight: 200, resize: 'vertical' }}
+                placeholder={"Bobadilla, Agustina\nBohórquez, Thiago\nBroccolini, Mateo\n..."}
+                value={alumnos}
+                onChange={e => setAlumnos(e.target.value)}
+              />
+              <div style={s.modalBtns}>
+                <button style={s.btnPrimary} onClick={guardarCurso}>Crear curso</button>
+                <button style={s.btnSec} onClick={() => setPaso(1)}>← Atrás</button>
+              </div>
+            </>}
+
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const s = {
+  container: { minHeight: '100vh', background: '#f8f8f6', padding: '1rem' },
+  inner: { maxWidth: 680, margin: '0 auto' },
+  header: { display: 'flex', alignItems: 'center', gap: 12, marginBottom: '1.5rem', paddingBottom: '1rem', borderBottom: '1px solid #eee' },
+  backBtn: { background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: '#888', padding: 0 },
+  headerLogo: { width: 36, height: 36, borderRadius: 8, background: '#f0f0f0', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0 },
+  headerTitulo: { flex: 1, fontSize: 18, fontWeight: 600, color: '#1a1a1a' },
+  btnPrimary: { background: '#378ADD', color: 'white', border: 'none', borderRadius: 8, padding: '8px 16px', fontSize: 14, fontWeight: 600, cursor: 'pointer' },
+  cursoCard: { background: 'white', border: '1px solid #eee', borderRadius: 12, padding: '1rem 1.25rem', marginBottom: 10, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
+  cursoNombre: { fontSize: 16, fontWeight: 600, color: '#1a1a1a' },
+  cursoDet: { fontSize: 13, color: '#888', marginTop: 3 },
+  empty: { textAlign: 'center', padding: '3rem 1rem', color: '#aaa', fontSize: 14, lineHeight: 1.6 },
+  overlay: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: '1rem' },
+  modal: { background: 'white', borderRadius: 16, padding: '1.5rem', width: '100%', maxWidth: 440, maxHeight: '90vh', overflowY: 'auto' },
+  modalTitulo: { fontSize: 17, fontWeight: 600, color: '#1a1a1a', marginBottom: '1rem' },
+  label: { fontSize: 13, color: '#666', display: 'block', marginBottom: 5, marginTop: 12 },
+  input: { width: '100%', border: '1px solid #ddd', borderRadius: 8, padding: '10px 12px', fontSize: 14, fontFamily: 'inherit', boxSizing: 'border-box' },
+  diasGrid: { display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 5 },
+  diaBtn: { border: '1px solid #ddd', borderRadius: 8, padding: '6px 12px', fontSize: 13, cursor: 'pointer', background: 'white', color: '#666' },
+  diaBtnSel: { background: '#378ADD', color: 'white', borderColor: '#378ADD' },
+  modalBtns: { display: 'flex', gap: 8, marginTop: 16 },
+  btnSec: { flex: 1, background: 'none', border: '1px solid #ddd', borderRadius: 8, padding: '10px', fontSize: 14, cursor: 'pointer', color: '#888' },
+};
